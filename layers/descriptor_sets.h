@@ -98,6 +98,8 @@ class DescriptorSetLayout {
     // Various Get functions that can either be passed a binding#, which will
     //  be automatically translated into the appropriate index from the original
     //  pBindings array, or the index# can be passed in directly
+    VkDescriptorSetLayoutBinding const * GetDescriptorSetLayoutBindingPtrFromBinding(const uint32_t);
+    VkDescriptorSetLayoutBinding const * GetDescriptorSetLayoutBindingPtrFromIndex(const uint32_t);
     uint32_t GetDescriptorCountFromBinding(const uint32_t);
     uint32_t GetDescriptorCountFromIndex(const uint32_t);
     VkDescriptorType GetTypeFromBinding(const uint32_t);
@@ -157,6 +159,16 @@ DescriptorSetLayout::~DescriptorSetLayout() {
         if (binding.pImmutableSamplers)
             delete[] binding.pImmutableSamplers;
     }
+}
+VkDescriptorSetLayoutBinding const * DescriptorSetLayout::GetDescriptorSetLayoutBindingPtrFromBinding(const uint32_t binding) {
+    if (!binding_to_index_map_.count(binding))
+        return nullptr;
+    return reinterpret_cast<VkDescriptorSetLayoutBinding const *>(&bindings_[binding_to_index_map_[binding]]);
+}
+VkDescriptorSetLayoutBinding const * DescriptorSetLayout::GetDescriptorSetLayoutBindingPtrFromIndex(const uint32_t index) {
+    if (index >= bindings_.size())
+        return nullptr;
+    return reinterpret_cast<VkDescriptorSetLayoutBinding const *>(&bindings_[index]);
 }
 // Return descriptorCount for given binding, 0 if index is unavailable
 uint32_t DescriptorSetLayout::GetDescriptorCountFromBinding(const uint32_t binding) {

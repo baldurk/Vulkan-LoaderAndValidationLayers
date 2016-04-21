@@ -1966,7 +1966,7 @@ static bool validate_push_constant_usage(layer_data *my_data,
 
 // For given pipelineLayout verify that the set_layout_node at slot.first
 //  has the requested binding at slot.second and return that set_layout_node
-static bool layout_has_binding(layer_data *my_data, PIPELINE_LAYOUT_NODE *pipelineLayout, descriptor_slot_t slot) {
+static VkDescriptorSetLayoutBinding const * get_descriptor_binding(layer_data *my_data, PIPELINE_LAYOUT_NODE *pipelineLayout, descriptor_slot_t slot) {
 
     if (!pipelineLayout)
         return false;
@@ -1976,7 +1976,7 @@ static bool layout_has_binding(layer_data *my_data, PIPELINE_LAYOUT_NODE *pipeli
 
     auto layout_node = my_data->descriptorSetLayoutMap[pipelineLayout->descriptorSetLayouts[slot.first]];
 
-    return layout_node.HasBinding(slot.second);
+    return layout_node.GetDescriptorSetLayoutBindingPtrFromBinding(slot.second);
 }
 
 // Block of code at start here for managing/tracking Pipeline state that this layer cares about
@@ -2499,48 +2499,44 @@ static bool validate_pipeline_shader_stage(layer_data *dev_data, VkPipelineShade
         pipeline->active_slots[use.first.first].insert(use.first.second);
 
         /* verify given pipelineLayout has requested setLayout with requested binding */
-        bool has_binding = layout_has_binding(dev_data, pipelineLayout, use.first);
+        auto binding = get_descriptor_binding(dev_data, pipelineLayout, use.first);
         unsigned required_descriptor_count;
 
-        if (!has_binding) {
+        if (!binding) {
             if (log_msg(dev_data->report_data, VK_DEBUG_REPORT_ERROR_BIT_EXT, VkDebugReportObjectTypeEXT(0), 0,
                         __LINE__, SHADER_CHECKER_MISSING_DESCRIPTOR, "SC",
                         "Shader uses descriptor slot %u.%u (used as type `%s`) but not declared in pipeline layout",
                         use.first.first, use.first.second, describe_type(module, use.second.type_id).c_str())) {
                 pass = false;
             }
-        } else {
-            auto layout_node = dev_data->descriptorSetLayoutMap[pipelineLayout->descriptorSetLayouts[use.first.first]];
-            if (~layout_node.GetStageFlagsFromBinding(use.first.second) & pStage->stage) {
-                if (log_msg(dev_data->report_data, VK_DEBUG_REPORT_ERROR_BIT_EXT, VK_DEBUG_REPORT_OBJECT_TYPE_DEVICE_EXT,
-                            /*dev*/ 0, __LINE__, SHADER_CHECKER_DESCRIPTOR_NOT_ACCESSIBLE_FROM_STAGE, "SC",
-                            "Shader uses descriptor slot %u.%u (used "
-                            "as type `%s`) but descriptor not "
-                            "accessible from stage %s",
-                            use.first.first, use.first.second, describe_type(module, use.second.type_id).c_str(),
-                            string_VkShaderStageFlagBits(pStage->stage))) {
-                    pass = false;
-                }
-            } else if (!descriptor_type_match(dev_data, module, use.second.type_id,
-                                              layout_node.GetTypeFromBinding(use.first.second),
-                                              /*out*/ required_descriptor_count)) {
-                if (log_msg(dev_data->report_data, VK_DEBUG_REPORT_ERROR_BIT_EXT, VkDebugReportObjectTypeEXT(0), 0, __LINE__,
-                            SHADER_CHECKER_DESCRIPTOR_TYPE_MISMATCH, "SC", "Type mismatch on descriptor slot "
-                                                                           "%u.%u (used as type `%s`) but "
-                                                                           "descriptor of type %s",
-                            use.first.first, use.first.second, describe_type(module, use.second.type_id).c_str(),
-                            string_VkDescriptorType(layout_node.GetTypeFromBinding(use.first.second)))) {
-                    pass = false;
-                }
-            } else if (layout_node.GetDescriptorCountFromBinding(use.first.second) < required_descriptor_count) {
-                if (log_msg(dev_data->report_data, VK_DEBUG_REPORT_ERROR_BIT_EXT, VkDebugReportObjectTypeEXT(0), 0, __LINE__,
-                            SHADER_CHECKER_DESCRIPTOR_TYPE_MISMATCH, "SC",
-                            "Shader expects at least %u descriptors for binding %u.%u (used as type `%s`) but only %u provided",
-                            required_descriptor_count, use.first.first, use.first.second,
-                            describe_type(module, use.second.type_id).c_str(),
-                            layout_node.GetDescriptorCountFromBinding(use.first.second))) {
-                    pass = false;
-                }
+        } else if (~binding->stageFlags & pStage->stage) {
+            if (log_msg(dev_data->report_data, VK_DEBUG_REPORT_ERROR_BIT_EXT, VK_DEBUG_REPORT_OBJECT_TYPE_DEVICE_EXT,
+                        /*dev*/ 0, __LINE__, SHADER_CHECKER_DESCRIPTOR_NOT_ACCESSIBLE_FROM_STAGE, "SC",
+                        "Shader uses descriptor slot %u.%u (used "
+                        "as type `%s`) but descriptor not "
+                        "accessible from stage %s",
+                        use.first.first, use.first.second, describe_type(module, use.second.type_id).c_str(),
+                        string_VkShaderStageFlagBits(pStage->stage))) {
+                pass = false;
+            }
+        } else if (!descriptor_type_match(dev_data, module, use.second.type_id, binding->descriptorType,
+                                          /*out*/ required_descriptor_count)) {
+            if (log_msg(dev_data->report_data, VK_DEBUG_REPORT_ERROR_BIT_EXT, VkDebugReportObjectTypeEXT(0), 0, __LINE__,
+                        SHADER_CHECKER_DESCRIPTOR_TYPE_MISMATCH, "SC", "Type mismatch on descriptor slot "
+                                                                       "%u.%u (used as type `%s`) but "
+                                                                       "descriptor of type %s",
+                        use.first.first, use.first.second, describe_type(module, use.second.type_id).c_str(),
+                        string_VkDescriptorType(binding->descriptorType))) {
+                pass = false;
+            }
+        } else if (binding->descriptorCount < required_descriptor_count) {
+            if (log_msg(dev_data->report_data, VK_DEBUG_REPORT_ERROR_BIT_EXT, VkDebugReportObjectTypeEXT(0), 0, __LINE__,
+                        SHADER_CHECKER_DESCRIPTOR_TYPE_MISMATCH, "SC",
+                        "Shader expects at least %u descriptors for binding %u.%u (used as type `%s`) but only %u provided",
+                        required_descriptor_count, use.first.first, use.first.second,
+                        describe_type(module, use.second.type_id).c_str(),
+                        binding->descriptorCount)) {
+                pass = false;
             }
         }
     }
